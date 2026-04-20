@@ -85,4 +85,4 @@ Adicionalmente, desde `[8] → [3]` puedes crear un punto de restauración del s
 
 ## Licencia
 
-MIT. Úsalo, modifícalo, gana tu competencia.
+MIT. FamiliaCuba.com
