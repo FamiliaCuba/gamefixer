@@ -265,9 +265,29 @@ function Show-MainMenu {
     Write-Host ""
 }
 
+function Show-UpdateBanner {
+    # Muestra un banner si $Global:GF.UpdateAvailable esta seteado
+    if (-not $Global:GF.UpdateAvailable) { return }
+    $u = $Global:GF.UpdateAvailable
+    if (-not $u.Available) { return }
+
+    Write-UI ('+' + ('-' * 74) + '+') -Color Yellow
+    Write-UI '| ' -Color Yellow -NoNewline
+    Write-Badge -Text ' UPDATE ' -Bg DarkYellow -Fg Black
+    Write-UI ("  v{0} -> v{1}   [U] para actualizar" -f $u.Current, $u.Remote) -Color Yellow -NoNewline
+    $msgLen = 3 + 8 + ("  v{0} -> v{1}   [U] para actualizar" -f $u.Current, $u.Remote).Length
+    $pad = 76 - $msgLen - 1
+    if ($pad -gt 0) { Write-UI (' ' * $pad) -NoNewline }
+    Write-UI '|' -Color Yellow
+    Write-UI ('+' + ('-' * 74) + '+') -Color Yellow
+    Write-Host ""
+}
+
 function Show-Footer {
     Write-UI ('-' * 76) -Color DarkGreen
     Write-UI "  " -NoNewline
+    Write-UI "[U]" -Color Yellow -NoNewline
+    Write-UI " update  " -Color DarkGreen -NoNewline
     Write-UI "[L]" -Color Yellow -NoNewline
     Write-UI " logs  " -Color DarkGreen -NoNewline
     Write-UI "[C]" -Color Yellow -NoNewline
@@ -275,7 +295,7 @@ function Show-Footer {
     Write-UI "[H]" -Color Yellow -NoNewline
     Write-UI " help  " -Color DarkGreen -NoNewline
     Write-UI "[D]" -Color Yellow -NoNewline
-    Write-UI " toggle dry-run  " -Color DarkGreen -NoNewline
+    Write-UI " dry-run  " -Color DarkGreen -NoNewline
     Write-UI "[Q]" -Color Yellow -NoNewline
     Write-UI " salir" -Color DarkGreen
     Write-Host ""
@@ -359,5 +379,5 @@ function Show-Help {
 
 Export-ModuleMember -Function Write-UI, Write-Badge, Write-TypeLine, Write-BarAt, `
     Write-LabelAt, Show-BootAnimation, Show-Banner, Show-TopBar, Show-StatusLine, `
-    Show-TelemetryPanels, Show-MainMenu, Show-Footer, Show-Section, `
-    Show-Logs, Show-Config, Show-Help, Confirm-Action
+    Show-TelemetryPanels, Show-UpdateBanner, Show-MainMenu, Show-Footer, `
+    Show-Section, Show-Logs, Show-Config, Show-Help, Confirm-Action

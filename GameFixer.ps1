@@ -8,8 +8,9 @@
 
 [CmdletBinding()]
 param(
-    [switch]$Live,      # Desactiva DRY-RUN
-    [switch]$NoBanner,  # Salta la animacion de boot
+    [switch]$Live,       # Desactiva DRY-RUN
+    [switch]$NoBanner,   # Salta la animacion de boot
+    [switch]$NoUpdate,   # Salta el check de updates al arrancar
     [string]$Profile = 'FamiliaCuba'
 )
 
@@ -29,6 +30,7 @@ if (-not $isAdmin) {
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
     if ($Live)     { $argList += '-Live' }
     if ($NoBanner) { $argList += '-NoBanner' }
+    if ($NoUpdate) { $argList += '-NoUpdate' }
     $argList += @('-Profile', "`"$Profile`"")
 
     try {
@@ -42,20 +44,21 @@ if (-not $isAdmin) {
 
 # --- Configuracion global ---------------------------------------------------
 $Global:GF = @{
-    Version      = 'v2.1'
-    Build        = '2604'
-    Profile      = $Profile
-    DryRun       = -not $Live
-    Root         = $PSScriptRoot
-    ModulesDir   = Join-Path $PSScriptRoot 'modules'
-    LogsDir      = Join-Path $PSScriptRoot 'logs'
-    BackupsDir   = Join-Path $PSScriptRoot 'backups'
-    LogFile      = $null
-    StartTime    = Get-Date
-    IsAdmin      = $isAdmin
-    Hostname     = $env:COMPUTERNAME
-    User         = $env:USERNAME
-    GPUVendor    = 'nvidia'   # nvidia | amd | intel | none
+    Version         = 'v2.1'
+    Build           = '2604'
+    Profile         = $Profile
+    DryRun          = -not $Live
+    Root            = $PSScriptRoot
+    ModulesDir      = Join-Path $PSScriptRoot 'modules'
+    LogsDir         = Join-Path $PSScriptRoot 'logs'
+    BackupsDir      = Join-Path $PSScriptRoot 'backups'
+    LogFile         = $null
+    StartTime       = Get-Date
+    IsAdmin         = $isAdmin
+    Hostname        = $env:COMPUTERNAME
+    User            = $env:USERNAME
+    GPUVendor       = 'nvidia'
+    UpdateAvailable = $null
 }
 
 # Crear directorios si no existen
@@ -63,7 +66,6 @@ foreach ($dir in @($Global:GF.LogsDir, $Global:GF.BackupsDir)) {
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
 }
 
-# Archivo de log de esta sesion
 $Global:GF.LogFile = Join-Path $Global:GF.LogsDir ("session-{0}.log" -f (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'))
 
 # Forzar encoding UTF-8 en consola
@@ -73,15 +75,15 @@ try {
     chcp 65001 | Out-Null
 } catch {}
 
-# Bloques Unicode (via codigo para evitar problemas de encoding)
 $Global:GF.BlockFull  = [char]0x2588
 $Global:GF.BlockLight = [char]0x2591
 
 # --- Carga de modulos -------------------------------------------------------
 $moduleOrder = @(
-    'UI.psm1',           # Helpers de UI y colores
-    'Logger.psm1',       # Sistema de logging
-    'Telemetry.psm1',    # Stats de sistema
+    'UI.psm1',
+    'Logger.psm1',
+    'Telemetry.psm1',
+    'Updater.psm1',
     'Diagnostico.psm1',
     'OptimizacionGamer.psm1',
     'GPU.psm1',
@@ -108,6 +110,16 @@ Initialize-Logger
 Write-Log -Level INFO -Message "GameFixer $($Global:GF.Version) iniciado por $($Global:GF.User)@$($Global:GF.Hostname)"
 Write-Log -Level INFO -Message "DryRun: $($Global:GF.DryRun) | Profile: $($Global:GF.Profile)"
 
+# --- Check silencioso de actualizaciones (async-ish) ------------------------
+if (-not $NoUpdate) {
+    # Lo hacemos en background para no bloquear el arranque
+    try {
+        Invoke-SilentUpdateCheck
+    } catch {
+        Write-Log -Level WARN -Message "Updater silent check fallo: $($_.Exception.Message)"
+    }
+}
+
 # --- Animacion de boot ------------------------------------------------------
 if (-not $NoBanner) {
     Show-BootAnimation
@@ -128,6 +140,7 @@ function Invoke-MenuChoice {
         '8' { Invoke-Rollback }
         '9' { Invoke-Salud }
         'P' { Invoke-Perfiles }
+        'U' { Invoke-UpdaterMenu }
         'L' { Show-Logs }
         'C' { Show-Config }
         'H' { Show-Help }
@@ -155,6 +168,7 @@ try {
         Show-Banner
         Show-StatusLine
         Show-TelemetryPanels
+        Show-UpdateBanner
         Show-MainMenu
         Show-Footer
 
@@ -163,7 +177,7 @@ try {
 
         $state = Invoke-MenuChoice -Choice $choice
 
-        if ($choice -match '^[0-9PLCH]$') {
+        if ($choice -match '^[0-9PLCHU]$') {
             Write-Host ""
             Write-UI "  Presiona ENTER para volver al menu..." -Color DarkGreen -NoNewline
             [void](Read-Host)
