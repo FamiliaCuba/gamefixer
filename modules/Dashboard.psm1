@@ -19,7 +19,9 @@ function ConvertTo-Sparkline {
         )
     }
 
-    if (-not $Values -or $Values.Count -eq 0) { return '' }
+    # IMPORTANTE: no usar "-not $Values" porque @(0) se evalua como $false
+    # y la funcion saldria temprano. Chequear explicitamente $null y Count.
+    if ($null -eq $Values -or $Values.Count -eq 0) { return '' }
     if ($Max -le 0) { $Max = 1 }
 
     $sb = New-Object System.Text.StringBuilder
