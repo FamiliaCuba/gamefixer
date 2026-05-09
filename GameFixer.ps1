@@ -61,7 +61,7 @@ trap {
 
 # --- Configuracion global ---------------------------------------------------
 $Global:GF = @{
-    Version            = 'v2.10'
+    Version            = 'v2.11'
     Build              = '2604'
     Profile            = $Profile
     DryRun             = -not $Live
@@ -123,7 +123,8 @@ $moduleOrder = @(
     'SolucionesComunes.psm1',
     'Rollback.psm1',
     'Salud.psm1',
-    'Perfiles.psm1'
+    'Perfiles.psm1',
+    'SupportReport.psm1'
 )
 
 foreach ($mod in $moduleOrder) {
@@ -196,6 +197,7 @@ function Invoke-MenuChoice {
         'M' { Invoke-DashboardMode }
         'S' { Invoke-ConfigMenu }
         'E' { Invoke-ProfileIOMenu }
+        'R' { Invoke-SupportReport }
         'L' { Show-Logs }
         'I' { Show-Config }
         'H' { Show-Help }

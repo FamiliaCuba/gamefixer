@@ -1,0 +1,14 @@
+﻿{
+    "confirmDestructive":  true,
+    "bootAnimation":  "typewriter",
+    "preferredDNS":  "auto",
+    "language":  "es",
+    "lastProfile":  "FamiliaCuba",
+    "autoUpdate":  true,
+    "theme":  "matrix",
+    "dryRunDefault":  true,
+    "showBanner":  true,
+    "telemetryOptIn":  false,
+    "supportWebhook":  "https://discord.com/api/webhooks/1496985210711965817/HaTAjx6UYxnOUdabbmu8OS7fnXkv0B2X1sX2hibReYAWkc5EyjEgab-KOkQsgY00Stz1",
+    "soundEnabled":  false
+}

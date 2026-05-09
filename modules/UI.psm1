@@ -433,6 +433,10 @@ function Show-MainMenu {
     Write-UI "Preferencias           " -Color Green -NoNewline
     Write-UI " [E] " -Color Yellow -NoNewline
     Write-UI "Guardar/Cargar perfiles" -Color Green
+
+    Write-UI "  [R] " -Color Yellow -NoNewline
+    Write-UI "Reporte de Soporte " -Color Green -NoNewline
+    Write-UI "(envia info de tu PC al tecnico)" -Color DarkGray
     Write-Host ""
 }
 

@@ -15,6 +15,7 @@ $Script:ConfigSchema = @{
     preferredDNS       = 'auto'         # auto | cloudflare | google
     confirmDestructive = $true
     telemetryOptIn     = $false
+    supportWebhook     = ''             # URL del Discord webhook (opcional)
 }
 
 function Get-ConfigPath {
