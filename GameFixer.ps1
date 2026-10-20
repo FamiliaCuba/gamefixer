@@ -1,5 +1,5 @@
 ﻿# ============================================================================
-#  GAMEFIXER v2.02 - FamiliaCuba Edition
+#  GAMEFIXER v3.0.1 - FamiliaCuba Edition
 #  Main entry point
 #  Herramienta profesional de diagnostico, optimizacion y reparacion de Windows
 # ============================================================================
@@ -11,7 +11,9 @@ param(
     [switch]$Live,
     [switch]$NoBanner,
     [switch]$NoUpdate,
-    [string]$Profile = 'FamiliaCuba'
+    [string]$Profile = 'FamiliaCuba',
+    [string]$Action,
+    [switch]$Confirm
 )
 
 $ErrorActionPreference = 'Stop'
@@ -29,10 +31,13 @@ if (-not $isAdmin) {
 
     # -NoExit mantiene la ventana elevada abierta si el script crashea
     # -ExecutionPolicy Bypass ignora restricciones globales del sistema
-    $argList = @('-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`"")
+    if (-not $Action) { $argList += '-NoExit' }
     if ($Live)     { $argList += '-Live' }
     if ($NoBanner) { $argList += '-NoBanner' }
     if ($NoUpdate) { $argList += '-NoUpdate' }
+    if ($Action)   { $argList += @('-Action', $Action) }
+    if ($Confirm)  { $argList += '-Confirm' }
     $argList += @('-Profile', "`"$Profile`"")
 
     try {
@@ -54,15 +59,17 @@ trap {
     Write-Host "Ubicacion:" -ForegroundColor Yellow
     Write-Host $_.ScriptStackTrace -ForegroundColor DarkRed
     Write-Host ""
-    Write-Host "Presiona ENTER para cerrar..." -ForegroundColor Yellow
-    Read-Host
+    if (-not $Action) {
+        Write-Host "Presiona ENTER para cerrar..." -ForegroundColor Yellow
+        Read-Host
+    }
     exit 1
 }
 
 # --- Configuracion global ---------------------------------------------------
 $Global:GF = @{
-    Version            = 'v2.11'
-    Build              = '2604'
+    Version            = 'v3.0.1'
+    Build              = '2610'
     Profile            = $Profile
     DryRun             = -not $Live
     Root               = $PSScriptRoot
@@ -146,6 +153,14 @@ try { Initialize-Config | Out-Null } catch { Write-Log -Level WARN -Message "Con
 
 # Cargar plugins
 try { Initialize-PluginLoader } catch { Write-Log -Level WARN -Message "Plugin loader fallo: $($_.Exception.Message)" }
+
+# La ventana grafica pide una accion y sale. El menu de consola no se toca.
+if ($Action) {
+    $bridge = Join-Path $Global:GF.ModulesDir 'GuiBridge.psm1'
+    Import-Module $bridge -Force -DisableNameChecking -Global
+    Invoke-GuiAction -Name $Action -Confirm:$Confirm
+    exit 0
+}
 
 # Check forzado de actualizaciones (bloquea hasta que usuario decida)
 if (-not $NoUpdate -and $Global:GF.Config.autoUpdate) {

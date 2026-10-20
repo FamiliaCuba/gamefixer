@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 #  modules/Red.psm1
 #  Diagnostico y optimizacion de red
 # ============================================================================
@@ -9,7 +9,7 @@ function Invoke-RedMenu {
         Show-Section "MODULO RED"
 
         Write-UI "  [1] Test de latencia (ping a DNS populares)" -Color Yellow
-        Write-UI "  [2] Flush DNS + reset Winsock + TCP/IP" -Color Yellow
+        Write-UI "  [2] Reiniciar adaptador y vaciar DNS" -Color Yellow
         Write-UI "  [3] Cambiar DNS a Cloudflare (1.1.1.1)" -Color Yellow
         Write-UI "  [4] Cambiar DNS a Google (8.8.8.8)" -Color Yellow
         Write-UI "  [5] Restaurar DNS automatico (DHCP)" -Color Yellow
@@ -56,35 +56,81 @@ function Test-Latency {
     }
 }
 
+function Get-InternetAdapters {
+    $skip = 'Hyper-V|vEthernet|VirtualBox|VMware|Wintun|WireGuard|Bluetooth|Loopback|WSL|Npcap|TAP-|TAP '
+    $up = @(Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object {
+        $_.Status -eq 'Up' -and $_.HardwareInterface -and -not $_.Virtual -and
+        $_.Name -notmatch $skip -and $_.InterfaceDescription -notmatch $skip
+    })
+    $routed = @()
+    try {
+        $idx = @(Get-NetRoute -DestinationPrefix '0.0.0.0/0' -ErrorAction Stop |
+            Where-Object { $_.NextHop -and $_.NextHop -ne '0.0.0.0' } |
+            Select-Object -ExpandProperty InterfaceIndex -Unique)
+        if ($idx.Count -gt 0) {
+            $routed = @($up | Where-Object { $idx -contains $_.InterfaceIndex })
+        }
+    } catch {}
+    if ($routed.Count -gt 0) { return $routed }
+    return $up
+}
+
 function Reset-Network {
     Write-Host ""
-    Write-UI "Reset completo de red:" -Color Cyan
+    Write-UI "Reinicio del adaptador:" -Color Cyan
+    Write-UI "  Vacia la cache DNS y reinicia solo el adaptador que sale a internet." -Color DarkGray
+    Write-UI "  No usa ipconfig /release, winsock reset ni ip reset." -Color DarkGray
 
-    Invoke-LoggedAction -Description "ipconfig /flushdns" -Action {
+    Invoke-LoggedAction -Description "Vaciar cache DNS" -Action {
         ipconfig /flushdns | Out-Null
-    }
-    Invoke-LoggedAction -Description "ipconfig /registerdns" -Action {
-        ipconfig /registerdns | Out-Null
-    }
-    Invoke-LoggedAction -Description "ipconfig /release + /renew" -Action {
-        ipconfig /release | Out-Null
-        Start-Sleep -Seconds 2
-        ipconfig /renew | Out-Null
-    }
-    Invoke-LoggedAction -Description "netsh winsock reset" -Action {
-        netsh winsock reset | Out-Null
-    }
-    Invoke-LoggedAction -Description "netsh int ip reset" -Action {
-        netsh int ip reset | Out-Null
+        Clear-DnsClientCache -ErrorAction SilentlyContinue
     }
 
-    Write-UI "  Nota: reinicia el equipo para aplicar winsock/tcp reset." -Color DarkYellow
+    $adapters = @(Get-InternetAdapters)
+    if ($adapters.Count -eq 0) {
+        Write-UI "  No hay un adaptador fisico con internet." -Color Yellow
+        return
+    }
+
+    foreach ($a in $adapters) {
+        $adapterName = [string]$a.Name
+        $restart = { Restart-NetAdapter -Name $adapterName -Confirm:$false -ErrorAction Stop }.GetNewClosure()
+        Invoke-LoggedAction -Description ("Reiniciar adaptador " + $adapterName) -Action $restart
+    }
+
+    if ($Global:GF.DryRun) {
+        Write-UI "  [PRUEBA] El adaptador no se reinicio." -Color DarkYellow
+        return
+    }
+
+    Start-Sleep -Seconds 4
+    foreach ($a in $adapters) {
+        $name = [string]$a.Name
+        $fresh = Get-NetAdapter -Name $name -ErrorAction SilentlyContinue
+        $ip = @(Get-NetIPAddress -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+            Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' })
+        if (-not $fresh -or $fresh.Status -ne 'Up' -or $ip.Count -eq 0) {
+            Write-UI ("  " + $name + " no recupero direccion. Volviendo a activarlo...") -Color Yellow
+            Enable-NetAdapter -Name $name -Confirm:$false -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 3
+            & ipconfig /renew $name | Out-Null
+            Start-Sleep -Seconds 2
+            $ip = @(Get-NetIPAddress -InterfaceAlias $name -AddressFamily IPv4 -ErrorAction SilentlyContinue |
+                Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' })
+        }
+        if ($ip.Count -gt 0) {
+            Write-UI ("  " + $name + " en linea: " + $ip[0].IPAddress) -Color Green
+        } else {
+            Write-UI ("  " + $name + " sigue sin IPv4. Revisa el Wi-Fi o el cable.") -Color Red
+        }
+    }
 }
 
 function Set-DNSToServers {
     param([string[]]$Servers, [string]$Name)
     Invoke-LoggedAction -Description "Configurar DNS a $Name ($($Servers -join ', '))" -Action {
-        $adapters = Get-NetAdapter | Where-Object Status -eq 'Up'
+        $adapters = @(Get-InternetAdapters)
+        if ($adapters.Count -eq 0) { throw 'No hay un adaptador fisico con internet.' }
         foreach ($a in $adapters) {
             Set-DnsClientServerAddress -InterfaceIndex $a.InterfaceIndex -ServerAddresses $Servers
             Write-UI ("       Configurado en: $($a.Name)") -Color Green
@@ -108,7 +154,8 @@ function Set-DNSGoogle {
 function Reset-DNS {
     Write-Host ""
     Invoke-LoggedAction -Description "Restaurar DNS a DHCP (automatico)" -Action {
-        $adapters = Get-NetAdapter | Where-Object Status -eq 'Up'
+        $adapters = @(Get-InternetAdapters)
+        if ($adapters.Count -eq 0) { throw 'No hay un adaptador fisico con internet.' }
         foreach ($a in $adapters) {
             Set-DnsClientServerAddress -InterfaceIndex $a.InterfaceIndex -ResetServerAddresses
         }

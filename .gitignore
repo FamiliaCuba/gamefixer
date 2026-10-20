@@ -29,3 +29,7 @@ tests/coverage.xml
 *.tmp
 *.bak
 *.cache
+dist/
+
+# Ajustes locales. Lleva el webhook de soporte.
+config.json

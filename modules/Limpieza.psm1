@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 #  modules/Limpieza.psm1
 #  Limpieza interactiva: elegir qué limpiar en lugar de todo de golpe
 # ============================================================================
@@ -196,9 +196,11 @@ function Invoke-WinSxSCleanup {
         return
     }
 
-    Write-UI "  [?] Confirmar ejecucion? (s/N): " -Color Yellow -NoNewline
-    $r = Read-Host
-    if ($r.Trim().ToLower() -ne 's') { return }
+    if (-not $Global:GF.GuiAction) {
+        Write-UI "  [?] Confirmar ejecucion? (s/N): " -Color Yellow -NoNewline
+        $r = Read-Host
+        if ($r.Trim().ToLower() -ne 's') { return }
+    }
 
     Write-UI "  Ejecutando (no cierres la ventana)..." -Color Cyan
     & DISM /Online /Cleanup-Image /StartComponentCleanup /ResetBase

@@ -40,20 +40,44 @@ function Invoke-GPUMenu {
 
 function Show-GPUInfo {
     Write-Host ""
-    Write-UI "Informacion detallada:" -Color Cyan
+    $gpus = @()
     try {
-        $out = & nvidia-smi --query-gpu=name,driver_version,memory.total,memory.free,memory.used,power.draw,power.limit,fan.speed --format=csv 2>$null
-        $out -split "`n" | ForEach-Object { Write-UI ("  " + $_) -Color Green }
+        $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)
     } catch {
-        Write-UI "  [!] nvidia-smi no disponible" -Color Red
+        Write-UI ("No se pudo leer la GPU: " + $_.Exception.Message) -Color Red
+        return
     }
 
-    Write-Host ""
-    Write-UI "Procesos usando GPU:" -Color Cyan
-    try {
-        $procs = & nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv 2>$null
-        $procs -split "`n" | ForEach-Object { Write-UI ("  " + $_) -Color Green }
-    } catch {}
+    $real = @($gpus | Where-Object {
+        $_.Name -and $_.Name -notmatch 'Basic|Remote|Virtual|IddCx|Indirect|Parsec|Oray'
+    })
+    if ($real.Count -eq 0) { $real = @($gpus | Where-Object { $_.Name }) }
+
+    if ($real.Count -eq 0) {
+        Write-UI "No se encontro ninguna tarjeta grafica." -Color Yellow
+        return
+    }
+
+    foreach ($gpu in $real) {
+        Write-UI ("GPU: " + $gpu.Name) -Color Green
+        $vram = 0
+        try { $vram = Get-GPUVRam -GpuName $gpu.Name -Fallback $gpu.AdapterRAM } catch { $vram = 0 }
+        if ($vram -gt 0) {
+            Write-UI ("Memoria: " + $vram + " GB") -Color Green
+        }
+        if ($gpu.DriverVersion) {
+            Write-UI ("Driver: " + $gpu.DriverVersion) -Color Green
+        }
+        if ($gpu.CurrentHorizontalResolution -and $gpu.CurrentVerticalResolution) {
+            Write-UI ("Pantalla: " + $gpu.CurrentHorizontalResolution + "x" + $gpu.CurrentVerticalResolution) -Color Green
+        }
+    }
+
+    $live = $null
+    try { $live = Get-NvidiaGPUStats } catch { $live = $null }
+    if ($live -and $live.Available) {
+        Write-UI ("Uso ahora: " + $live.Usage + "% a " + $live.Temp + " C") -Color Green
+    }
 }
 
 function Clear-ShaderCache {
@@ -118,6 +142,21 @@ function Set-GPUMaxPerformance {
     Write-UI "  Nota: algunos ajustes requieren NVIDIA Control Panel." -Color DarkYellow
 }
 
+function Get-DriverPage {
+    $prefer = $null
+    try {
+        $gpus = @(Get-CimInstance Win32_VideoController -ErrorAction SilentlyContinue)
+    } catch { return $null }
+    foreach ($g in $gpus) {
+        if (-not $g.Name) { continue }
+        if ($g.Name -match 'Basic|Remote|Virtual|IddCx|Indirect') { continue }
+        if ($g.Name -match 'NVIDIA') { return 'https://www.nvidia.com/Download/index.aspx' }
+        if ($g.Name -match 'AMD|Radeon') { $prefer = 'https://www.amd.com/en/support/download/drivers.html' }
+        elseif (-not $prefer -and $g.Name -match 'Intel') { $prefer = 'https://www.intel.com/content/www/us/en/download-center/home.html' }
+    }
+    return $prefer
+}
+
 function Test-GPUDriverVersion {
     Write-Host ""
     Write-UI "Verificando driver NVIDIA..." -Color Cyan
@@ -129,7 +168,9 @@ function Test-GPUDriverVersion {
     } catch {}
 
     if (-not $installed) {
-        Write-UI "  [!] nvidia-smi no disponible o GPU NVIDIA no detectada" -Color Red
+        Write-UI "  nvidia-smi no disponible o no hay GPU NVIDIA." -Color Yellow
+        $page = Get-DriverPage
+        if ($page) { Write-UI ("DRIVERURL|" + $page) -Color Cyan }
         return
     }
 
@@ -201,6 +242,9 @@ function Test-GPUDriverVersion {
         Write-UI "  [!] No se pudo consultar ultima version. Verifica manualmente en:" -Color Yellow
         Write-UI "      https://www.nvidia.com/Download/index.aspx" -Color Cyan
     }
+    $page = Get-DriverPage
+    if (-not $page) { $page = 'https://www.nvidia.com/Download/index.aspx' }
+    Write-UI ("DRIVERURL|" + $page) -Color Cyan
 }
 
 Export-ModuleMember -Function Invoke-GPUMenu, Show-GPUInfo, Clear-ShaderCache, Watch-GPU, Set-GPUMaxPerformance, Test-GPUDriverVersion

@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 #  modules/UI.psm1
 #  Helpers de interfaz: colores, banner, paneles, animaciones, temas
 # ============================================================================
@@ -133,10 +133,14 @@ function Write-UI {
         [switch]$NoNewline
     )
     $themedColor = ConvertTo-ThemeColor -Color $Color
-    $prev = [Console]::ForegroundColor
-    [Console]::ForegroundColor = $themedColor
-    if ($NoNewline) { [Console]::Write($Text) } else { [Console]::WriteLine($Text) }
-    [Console]::ForegroundColor = $prev
+    try {
+        $prev = [Console]::ForegroundColor
+        [Console]::ForegroundColor = $themedColor
+        if ($NoNewline) { [Console]::Write($Text) } else { [Console]::WriteLine($Text) }
+        [Console]::ForegroundColor = $prev
+    } catch {
+        if ($NoNewline) { [Console]::Out.Write($Text) } else { [Console]::Out.WriteLine($Text) }
+    }
 }
 
 function Write-Badge {

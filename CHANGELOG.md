@@ -1,6 +1,12 @@
 # CHANGELOG
 
-## v2.06 - "Live & Persistent" (actual)
+## v3.0.1 - "Nueva cara" (actual)
+
+- Ventana renovada: iconos en las tarjetas, barra de progreso, informe de soporte con código copiable y detección de juegos.
+- La ficha de un juego abre su ajuste si existe. Inicio guarda las últimas acciones. Medir compara con la vez anterior. Reparar lista el inicio de Windows. El driver abre la página del fabricante.
+- La app, el pie de la ventana y el actualizador anuncian la versión 3.0.1.
+
+## v2.06 - "Live & Persistent"
 
 ### ✨ Nuevas features
 

@@ -1,4 +1,4 @@
-﻿# ============================================================================
+# ============================================================================
 #  modules/Reparacion.psm1
 #  Reparacion de archivos del sistema (SFC, DISM, chkdsk)
 # ============================================================================
@@ -69,8 +69,8 @@ function Repair-WindowsStore {
     Invoke-LoggedAction -Description "wsreset" -Action {
         & wsreset.exe
     }
-    Invoke-LoggedAction -Description "Re-registrar apps de Store" -Action {
-        Get-AppxPackage -AllUsers | ForEach-Object {
+    Invoke-LoggedAction -Description "Re-registrar Microsoft Store" -Action {
+        Get-AppxPackage -Name 'Microsoft.WindowsStore' | ForEach-Object {
             Add-AppxPackage -DisableDevelopmentMode -Register "$($_.InstallLocation)\AppXManifest.xml" -ErrorAction SilentlyContinue
         }
     }

@@ -67,10 +67,18 @@ function Invoke-SupportReport {
 #  CONFIGURACION DEL WEBHOOK
 # ============================================================================
 
+function Get-SupportWebhook {
+    if ($null -ne $Global:GF.Config) {
+        $configured = [string]$Global:GF.Config.supportWebhook
+        $known = ($configured -like 'https://discord.com/api/webhooks/*' -or $configured -like 'https://discordapp.com/api/webhooks/*')
+        if ($known -and $configured -notlike '*1496985210711965817*') { return $configured }
+    }
+    return 'https://discordapp.com/api/webhooks/1562193739663802418/vaZ8IQo-VWCjC7nWtdLgmxhzNJZgKjxMrYh5j5OKjwY1EbaAuw0FLj1fYNzbR3adtZLe'
+}
+
 function Test-SupportWebhookConfigured {
-    if ($null -eq $Global:GF.Config) { return $false }
-    $url = $Global:GF.Config.supportWebhook
-    return ($null -ne $url -and $url -like 'https://discord.com/api/webhooks/*')
+    $url = Get-SupportWebhook
+    return ($null -ne $url -and ($url -like 'https://discord.com/api/webhooks/*' -or $url -like 'https://discordapp.com/api/webhooks/*'))
 }
 
 function Set-SupportWebhook {
@@ -145,7 +153,7 @@ function Test-SupportWebhook {
 
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        $resp = Invoke-WebRequest -Uri $Global:GF.Config.supportWebhook -Method POST `
+        $resp = Invoke-WebRequest -Uri (Get-SupportWebhook) -Method POST `
             -Body $payload -ContentType 'application/json' -UseBasicParsing -TimeoutSec 15
         if ($resp.StatusCode -in 200, 204) {
             Write-UI "  [OK] Webhook funciona. Revisa tu Discord." -Color Green
@@ -164,14 +172,29 @@ function Test-SupportWebhook {
 # ============================================================================
 
 function New-SupportPackage {
-    param([bool]$Full = $true)
+    param(
+        [bool]$Full = $true,
+        [string]$GuiNote
+    )
 
     Write-Host ""
     Write-UI "=== GENERANDO REPORTE DE SOPORTE ===" -Color Cyan
     Write-Host ""
 
     # Paso 1: Pedir descripcion del problema
-    $problem = Get-ProblemDescription
+    $problem = $null
+    if ($PSBoundParameters.ContainsKey('GuiNote')) {
+        $text = ''
+        if ($GuiNote) { $text = $GuiNote.Trim() }
+        if (-not $text) { $text = '(sin descripcion)' }
+        $problem = @{
+            Category     = 'Otro (desde la ventana)'
+            CategoryCode = 'other'
+            Description  = $text
+        }
+    } else {
+        $problem = Get-ProblemDescription
+    }
     if (-not $problem) {
         Write-UI "  Cancelado" -Color Yellow
         return
@@ -1305,7 +1328,7 @@ function Send-SupportToDiscord {
         $Gaming
     )
 
-    $webhook = $Global:GF.Config.supportWebhook
+    $webhook = Get-SupportWebhook
     if (-not $webhook) { return $false }
 
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -1744,7 +1767,9 @@ $modulesText
                     -UseBasicParsing -TimeoutSec 60
                 if ($resp.StatusCode -notin 200, 204) { $overallSuccess = $false }
             } catch {
-                Write-UI ("  [!] ZIP no se pudo adjuntar: " + $_.Exception.Message) -Color DarkYellow
+                $zipErr = $_.Exception.Message
+                if ($zipErr) { $zipErr = $zipErr -replace 'https://discord(?:app)?\.com/api/webhooks/\S+', 'webhook' }
+                Write-UI ("  [!] ZIP no se pudo adjuntar: " + $zipErr) -Color DarkYellow
             }
         }
     }
@@ -1763,7 +1788,9 @@ function Send-DiscordMessage {
         Start-Sleep -Milliseconds 600
         return ($resp.StatusCode -in 200, 204)
     } catch {
-        Write-UI ("  [!] Discord respondio error: " + $_.Exception.Message) -Color DarkYellow
+        $err = $_.Exception.Message
+        if ($err) { $err = $err -replace 'https://discord(?:app)?\.com/api/webhooks/\S+', 'webhook' }
+        Write-UI ("  [!] Discord respondio error: " + $err) -Color DarkYellow
         return $false
     }
 }

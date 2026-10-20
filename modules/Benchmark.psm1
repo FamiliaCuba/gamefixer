@@ -528,6 +528,51 @@ function Show-BenchResult {
     Write-UI ("  [$t] " + $Result.Summary) -Color Green
 }
 
+function Write-BenchCompare {
+    param($Prev, $Now, [string]$Kind, [string]$Dir)
+    if (-not $Prev -or -not $Now) { return }
+    $before = $null
+    $after = $null
+    switch ($Kind) {
+        'CPU'     { $before = $Prev.SingleScore; $after = $Now.SingleScore }
+        'RAM'     { $before = $Prev.ReadMBs;     $after = $Now.ReadMBs }
+        'Disk'    {
+            $before = $Prev.MaxReadMBs; if (-not $before) { $before = $Prev.ReadMBs }
+            $after  = $Now.MaxReadMBs;  if (-not $after)  { $after  = $Now.ReadMBs }
+        }
+        'Network' { $before = $Prev.DownMbps;    $after = $Now.DownMbps }
+        'Full'    { $before = $Prev.GlobalScore; $after = $Now.GlobalScore }
+    }
+    if ($null -eq $before -or $null -eq $after) { return }
+    $beforeN = 0.0
+    $afterN = 0.0
+    try {
+        $beforeN = [double]$before
+        $afterN = [double]$after
+    } catch { return }
+    if ($beforeN -le 0) { return }
+    $dir = 'same'
+    if ($afterN -gt $beforeN) { $dir = 'up' }
+    elseif ($afterN -lt $beforeN) { $dir = 'down' }
+    $b = [int][math]::Round($beforeN)
+    $a = [int][math]::Round($afterN)
+    Write-UI ("CMP|" + $Kind + "|" + $dir + "|" + $b + "|" + $a) -Color Cyan
+    if (-not $Dir) { return }
+    $file = Join-Path $Dir 'last-compare.txt'
+    $map = @{}
+    if (Test-Path $file) {
+        foreach ($line in @(Get-Content $file -ErrorAction SilentlyContinue)) {
+            $bits = $line -split "`t"
+            if ($bits.Count -ge 4) { $map[$bits[0]] = $line }
+        }
+    }
+    $map[$Kind] = ($Kind + "`t" + $b + "`t" + $a + "`t" + $dir)
+    $order = @('CPU', 'RAM', 'Disk', 'Network', 'Full')
+    $out = @()
+    foreach ($k in $order) { if ($map.ContainsKey($k)) { $out += $map[$k] } }
+    Set-Content -Path $file -Value $out -Encoding UTF8
+}
+
 function Save-BenchResult {
     param([string]$Type, $Result)
     $benchDir = Join-Path $Global:GF.Root 'benchmarks'
@@ -538,6 +583,17 @@ function Save-BenchResult {
     if (Test-Path $file) {
         try { $history = @(Get-Content $file -Raw | ConvertFrom-Json) } catch {}
     }
+    $prev = $null
+    foreach ($h in @($history)) {
+        if (-not $h) { continue }
+        $kind = $null
+        if ($h.PSObject.Properties.Name -contains 'Kind' -and $h.Kind) { $kind = [string]$h.Kind }
+        elseif ($h.PSObject.Properties.Name -contains 'Type' -and $h.Type) { $kind = [string]$h.Type }
+        if ($kind -eq $Type) { $prev = $h }
+    }
+    if ($Result.PSObject.Properties.Name -contains 'Kind') { $Result.Kind = $Type }
+    else { $Result | Add-Member -NotePropertyName 'Kind' -NotePropertyValue $Type -Force }
+    Write-BenchCompare -Prev $prev -Now $Result -Kind $Type -Dir $benchDir
     $history = @($history) + @($Result)
     if ($history.Count -gt 50) { $history = $history[-50..-1] }
     $history | ConvertTo-Json -Depth 6 | Set-Content -Path $file -Encoding UTF8

@@ -5,6 +5,25 @@
 #           Xbox Game Pass, Microsoft Store
 # ============================================================================
 
+# La ventana no necesita pesar cada carpeta: recorrer un juego entero tarda minutos.
+$script:MeasureGameSize = $true
+
+function Set-GameSizeMeasure {
+    param([bool]$Enabled)
+    $script:MeasureGameSize = $Enabled
+}
+
+function Get-GameSizeGB {
+    param([string]$Path)
+    if (-not $script:MeasureGameSize) { return 0 }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path)) { return 0 }
+    try {
+        $sum = (Get-ChildItem -LiteralPath $Path -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum
+        if (-not $sum) { return 0 }
+        return [math]::Round($sum / 1GB, 1)
+    } catch { return 0 }
+}
+
 function Invoke-GameDetectorMenu {
     Show-Section "DETECTOR DE JUEGOS Y LAUNCHERS"
 
@@ -155,29 +174,86 @@ function Get-InstalledLaunchers {
     return $found
 }
 
+function Test-IgnoredGameName {
+    param([string]$Name)
+    if (-not $Name) { return $true }
+    $low = $Name.ToLowerInvariant()
+    $exact = @(
+        'shaders', 'gamesave', 'content', 'retail', 'xboxgamecallableui',
+        'steamworks common redistributables', 'directx', 'proton experimental',
+        'steam linux runtime', 'steam linux runtime soldier', 'steam linux runtime sniper'
+    )
+    if ($exact -contains $low) { return $true }
+    if ($low -match 'redistributable|dedicated server|proton |steam linux runtime|steamworks common|xboxgamecallableui|gamingoverlay|identityprovider|speechtotext|vclibs') { return $true }
+    return $false
+}
+
+function Add-SteamLibraryPath {
+    param($Bag, [string]$Path)
+    if (-not $Path) { return }
+    $Path = $Path.Trim().Trim('"').TrimEnd('\')
+    $Path = $Path -replace '\\\\', '\' -replace '/', '\'
+    if (-not $Path) { return }
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $apps = Join-Path $Path 'steamapps'
+    if (-not (Test-Path -LiteralPath $apps)) {
+        $hit = Get-ChildItem -LiteralPath $Path -Filter 'appmanifest_*.acf' -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $hit) { return }
+        $apps = $Path
+        $Path = Split-Path $Path -Parent
+    }
+    $key = $Path.ToLowerInvariant()
+    if (-not $Bag.Contains($key)) { $Bag[$key] = $Path }
+}
+
 function Get-SteamGames {
     param($SteamLauncher)
     $results = @()
-    if (-not $SteamLauncher) { return $results }
+    $bag = @{}
+    if ($SteamLauncher -and $SteamLauncher.Path) { Add-SteamLibraryPath $bag $SteamLauncher.Path }
 
-    $libFile = Join-Path $SteamLauncher.Path 'steamapps\libraryfolders.vdf'
-    if (-not (Test-Path $libFile)) { return $results }
-
-    $content = Get-Content $libFile -Raw
-    $libPaths = @()
-    # Extraer paths de libreria (funciona incluso con librerias en otros discos)
-    $regex = '"path"\s*"([^"]+)"'
-    $ms = [regex]::Matches($content, $regex)
-    foreach ($m in $ms) {
-        $p = $m.Groups[1].Value -replace '\\\\', '\'
-        if (Test-Path $p) { $libPaths += $p }
+    $vdfs = @()
+    if ($SteamLauncher -and $SteamLauncher.Path) {
+        $vdfs += (Join-Path $SteamLauncher.Path 'steamapps\libraryfolders.vdf')
+        $vdfs += (Join-Path $SteamLauncher.Path 'steamapps\libraryfolders.vdf')
+    }
+    foreach ($drive in Get-AllDrives) {
+        Add-SteamLibraryPath $bag "$drive\SteamLibrary"
+        Add-SteamLibraryPath $bag "$drive\Steam"
+        Add-SteamLibraryPath $bag "$drive\Games\Steam"
+        Add-SteamLibraryPath $bag "$drive\Games\SteamLibrary"
+        Add-SteamLibraryPath $bag "$drive\Program Files (x86)\Steam"
+        Add-SteamLibraryPath $bag "$drive\Program Files\Steam"
+        $vdfs += "$drive\SteamLibrary\steamapps\libraryfolders.vdf"
+        $vdfs += "$drive\Program Files (x86)\Steam\steamapps\libraryfolders.vdf"
+        $vdfs += "$drive\Program Files\Steam\steamapps\libraryfolders.vdf"
+        Get-ChildItem -LiteralPath "$drive\" -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+            Add-SteamLibraryPath $bag $_.FullName
+        }
     }
 
-    foreach ($lib in $libPaths) {
-        $manifests = Get-ChildItem (Join-Path $lib 'steamapps') -Filter 'appmanifest_*.acf' -ErrorAction SilentlyContinue
+    foreach ($vdf in $vdfs) {
+        if (-not (Test-Path -LiteralPath $vdf)) { continue }
+        $content = $null
+        try { $content = [System.IO.File]::ReadAllText($vdf) } catch { continue }
+        if (-not $content) { continue }
+        $ms = [regex]::Matches($content, '"path"\s*"([^"]+)"')
+        foreach ($m in $ms) { Add-SteamLibraryPath $bag $m.Groups[1].Value }
+    }
+
+    $toolIds = @('228980', '228990', '1070560', '1391110', '1628350', '1493710', '2180100', '1580130')
+    foreach ($lib in $bag.Values) {
+        $apps = Join-Path $lib 'steamapps'
+        if (-not (Test-Path -LiteralPath $apps)) { continue }
+        $manifests = Get-ChildItem -LiteralPath $apps -Filter 'appmanifest_*.acf' -ErrorAction SilentlyContinue
         foreach ($mf in $manifests) {
-            $mfContent = Get-Content $mf.FullName -Raw
-            $name = if ($mfContent -match '"name"\s*"([^"]+)"') { $matches[1] } else { 'Unknown' }
+            $mfContent = $null
+            try { $mfContent = [System.IO.File]::ReadAllText($mf.FullName) } catch { continue }
+            if (-not $mfContent) { continue }
+            $appId = if ($mfContent -match '"appid"\s*"(\d+)"') { $matches[1] } else { '' }
+            if ($toolIds -contains $appId) { continue }
+            $name = if ($mfContent -match '"name"\s*"([^"]+)"') { $matches[1] } else { '' }
+            if (Test-IgnoredGameName $name) { continue }
             $size = if ($mfContent -match '"SizeOnDisk"\s*"(\d+)"') { [long]$matches[1] } else { 0 }
             $installDir = if ($mfContent -match '"installdir"\s*"([^"]+)"') { $matches[1] } else { '' }
             $fullPath = Join-Path $lib ('steamapps\common\' + $installDir)
@@ -224,9 +300,7 @@ function Get-RiotGames {
     }
     foreach ($p in $candidates) {
         if (Test-Path $p) {
-            $sz = try {
-                [math]::Round((Get-ChildItem $p -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB, 1)
-            } catch { 0 }
+            $sz = Get-GameSizeGB $p
             $results += [pscustomobject]@{ Launcher='Riot'; Name='VALORANT'; InstallDir=$p; SizeGB=$sz }
             break
         }
@@ -242,9 +316,7 @@ function Get-RiotGames {
         )
         foreach ($p in $candidates) {
             if (Test-Path $p) {
-                $sz = try {
-                    [math]::Round((Get-ChildItem $p -Recurse -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum / 1GB, 1)
-                } catch { 0 }
+                $sz = Get-GameSizeGB $p
                 $results += [pscustomobject]@{ Launcher='Riot'; Name='League of Legends'; InstallDir=$p; SizeGB=$sz }
                 return $results
             }
@@ -309,6 +381,7 @@ function Get-XboxGamePassGames {
                          'Microsoft.XboxSpeechToTextOverlay','Microsoft.Xbox.TCUI',
                          'Microsoft.GamingServices')
             if ($pkg.Name -in $notGame) { $isGame = $false }
+            if ($pkg.Name -match 'Overlay|CallableUI|Identity|Speech|TCUI|GameSave|Shader|VCLibs|Native') { $isGame = $false }
 
             if ($isGame -and $pkg.InstallLocation -and (Test-Path $pkg.InstallLocation)) {
                 $displayName = $pkg.Name -replace '^Microsoft\.', '' -replace '^\w+\.', ''
@@ -324,11 +397,7 @@ function Get-XboxGamePassGames {
                     }
                 } catch {}
 
-                $sz = 0
-                try {
-                    $sz = [math]::Round((Get-ChildItem $pkg.InstallLocation -Recurse -ErrorAction SilentlyContinue |
-                                          Measure-Object Length -Sum).Sum / 1GB, 1)
-                } catch {}
+                $sz = Get-GameSizeGB $pkg.InstallLocation
 
                 $results += [pscustomobject]@{
                     Launcher   = 'Xbox/GP'
@@ -349,12 +418,10 @@ function Get-XboxGamePassGames {
             Get-ChildItem $modPath -Directory -ErrorAction SilentlyContinue | ForEach-Object {
                 $dir = $_.FullName
                 # Evitar duplicar juegos ya encontrados via Appx
+                if (Test-IgnoredGameName $_.Name) { return }
                 $alreadyFound = $results | Where-Object { $_.InstallDir -like "$dir*" }
                 if (-not $alreadyFound) {
-                    $sz = try {
-                        [math]::Round((Get-ChildItem $dir -Recurse -ErrorAction SilentlyContinue |
-                                        Measure-Object Length -Sum).Sum / 1GB, 1)
-                    } catch { 0 }
+                    $sz = Get-GameSizeGB $dir
                     $results += [pscustomobject]@{
                         Launcher   = 'Xbox/GP'
                         Name       = $_.Name
@@ -370,12 +437,10 @@ function Get-XboxGamePassGames {
         if (Test-Path $modPath2) {
             Get-ChildItem $modPath2 -Directory -ErrorAction SilentlyContinue | ForEach-Object {
                 $dir = $_.FullName
+                if (Test-IgnoredGameName $_.Name) { return }
                 $alreadyFound = $results | Where-Object { $_.InstallDir -like "$dir*" }
                 if (-not $alreadyFound) {
-                    $sz = try {
-                        [math]::Round((Get-ChildItem $dir -Recurse -ErrorAction SilentlyContinue |
-                                        Measure-Object Length -Sum).Sum / 1GB, 1)
-                    } catch { 0 }
+                    $sz = Get-GameSizeGB $dir
                     $results += [pscustomobject]@{
                         Launcher   = 'Xbox/GP'
                         Name       = $_.Name
@@ -410,10 +475,7 @@ function Get-EAGames {
                     $p = $m.Value
                     if (Test-Path $p) {
                         $name = Split-Path $p -Leaf
-                        $sz = try {
-                            [math]::Round((Get-ChildItem $p -Recurse -ErrorAction SilentlyContinue |
-                                            Measure-Object Length -Sum).Sum / 1GB, 1)
-                        } catch { 0 }
+                        $sz = Get-GameSizeGB $p
                         $results += [pscustomobject]@{
                             Launcher   = 'EA'
                             Name       = $name
@@ -434,10 +496,7 @@ function Get-EAGames {
                 Get-ChildItem $p -Directory -ErrorAction SilentlyContinue | ForEach-Object {
                     $alreadyFound = $results | Where-Object { $_.InstallDir -eq $_.FullName }
                     if (-not $alreadyFound) {
-                        $sz = try {
-                            [math]::Round((Get-ChildItem $_.FullName -Recurse -ErrorAction SilentlyContinue |
-                                            Measure-Object Length -Sum).Sum / 1GB, 1)
-                        } catch { 0 }
+                        $sz = Get-GameSizeGB $_.FullName
                         $results += [pscustomobject]@{
                             Launcher   = 'EA'
                             Name       = $_.Name
@@ -450,6 +509,85 @@ function Get-EAGames {
         }
     }
 
+    $eaKeys = @(
+        'HKLM:\SOFTWARE\WOW6432Node\EA Games',
+        'HKLM:\SOFTWARE\EA Games',
+        'HKLM:\SOFTWARE\WOW6432Node\Electronic Arts',
+        'HKLM:\SOFTWARE\Electronic Arts'
+    )
+    foreach ($k in $eaKeys) {
+        if (-not (Test-Path $k)) { continue }
+        Get-ChildItem $k -ErrorAction SilentlyContinue | ForEach-Object {
+            $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            $dir = $props.'Install Dir'
+            if (-not $dir) { $dir = $props.InstallDir }
+            if (-not $dir) { $dir = $props.InstallPath }
+            if ($dir -and (Test-Path $dir) -and -not (Test-IgnoredGameName $_.PSChildName)) {
+                $results += [pscustomobject]@{
+                    Launcher   = 'EA'
+                    Name       = $_.PSChildName
+                    InstallDir = $dir
+                    SizeGB     = 0
+                }
+            }
+        }
+    }
+
+    return $results
+}
+
+function Get-BattleNetGames {
+    $results = @()
+    $roots = @(
+        'HKLM:\SOFTWARE\WOW6432Node\Blizzard Entertainment',
+        'HKLM:\SOFTWARE\Blizzard Entertainment',
+        'HKCU:\SOFTWARE\Blizzard Entertainment',
+        'HKLM:\SOFTWARE\WOW6432Node\Activision',
+        'HKLM:\SOFTWARE\Activision',
+        'HKCU:\SOFTWARE\Activision'
+    )
+    foreach ($root in $roots) {
+        if (-not (Test-Path $root)) { continue }
+        Get-ChildItem $root -ErrorAction SilentlyContinue | ForEach-Object {
+            $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
+            $dir = $props.InstallPath
+            if (-not $dir) { $dir = $props.InstallLocation }
+            if (-not $dir) { $dir = $props.GamePath }
+            $name = $_.PSChildName
+            if ($name -match 'Battle\.net|Agent|Blizzard Error') { return }
+            if ($dir -and (Test-Path $dir)) {
+                $results += [pscustomobject]@{
+                    Launcher   = 'Battle.net'
+                    Name       = $name
+                    InstallDir = $dir
+                    SizeGB     = 0
+                }
+            }
+        }
+    }
+
+    $uninstall = @(
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    foreach ($key in $uninstall) {
+        Get-ItemProperty $key -ErrorAction SilentlyContinue | ForEach-Object {
+            if (-not $_.DisplayName -or -not $_.InstallLocation) { return }
+            if (-not (Test-Path $_.InstallLocation)) { return }
+            $pub = ''
+            if ($_.Publisher) { $pub = [string]$_.Publisher }
+            $fromStore = $pub -match 'Blizzard|Activision' -or $_.DisplayName -match 'Overwatch|Diablo|Warcraft|StarCraft|Hearthstone|Call of Duty|Heroes of the Storm|Destiny 2|World of Warcraft'
+            if (-not $fromStore) { return }
+            if ($_.DisplayName -match 'Battle\.net|Redistributable') { return }
+            $results += [pscustomobject]@{
+                Launcher   = 'Battle.net'
+                Name       = $_.DisplayName
+                InstallDir = $_.InstallLocation
+                SizeGB     = 0
+            }
+        }
+    }
     return $results
 }
 
@@ -466,10 +604,7 @@ function Get-UbisoftGames {
                 $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
                 if ($props.InstallDir -and (Test-Path $props.InstallDir)) {
                     $name = Split-Path $props.InstallDir -Leaf
-                    $sz = try {
-                        [math]::Round((Get-ChildItem $props.InstallDir -Recurse -ErrorAction SilentlyContinue |
-                                        Measure-Object Length -Sum).Sum / 1GB, 1)
-                    } catch { 0 }
+                    $sz = Get-GameSizeGB $props.InstallDir
                     $results += [pscustomobject]@{
                         Launcher   = 'Ubisoft'
                         Name       = $name
@@ -495,10 +630,7 @@ function Get-GOGGames {
                 $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
                 if ($props.PATH -and (Test-Path $props.PATH)) {
                     $name = if ($props.GAMENAME) { $props.GAMENAME } else { Split-Path $props.PATH -Leaf }
-                    $sz = try {
-                        [math]::Round((Get-ChildItem $props.PATH -Recurse -ErrorAction SilentlyContinue |
-                                        Measure-Object Length -Sum).Sum / 1GB, 1)
-                    } catch { 0 }
+                    $sz = Get-GameSizeGB $props.PATH
                     $results += [pscustomobject]@{
                         Launcher   = 'GOG'
                         Name       = $name
@@ -517,36 +649,30 @@ function Get-InstalledGames {
 
     $games = @()
 
-    # Steam
-    $steam = $Launchers | Where-Object Name -eq 'Steam'
-    if ($steam) { $games += Get-SteamGames -SteamLauncher $steam }
+    $steam = $null
+    if ($Launchers) { $steam = $Launchers | Where-Object Name -eq 'Steam' | Select-Object -First 1 }
+    $games += Get-SteamGames -SteamLauncher $steam
+    $games += Get-EpicGames
+    $games += Get-RiotGames
 
-    # Epic
-    $epic = $Launchers | Where-Object Name -eq 'Epic Games'
-    if ($epic) { $games += Get-EpicGames }
-
-    # Riot
-    $riot = $Launchers | Where-Object Name -eq 'Riot Games'
-    if ($riot) { $games += Get-RiotGames -RiotLauncher $riot }
-
-    # Xbox Game Pass / MS Store (siempre, aunque no haya 'launcher' formal)
     $games += Get-XboxGamePassGames
-
-    # EA App
     $games += Get-EAGames
-
-    # Ubisoft
+    $games += Get-BattleNetGames
     $games += Get-UbisoftGames
-
-    # GOG
     $games += Get-GOGGames
 
-    # Dedup por InstallDir
-    $games = $games | Sort-Object InstallDir -Unique
-
-    return $games
+    $clean = @()
+    $seen = @{}
+    foreach ($g in $games) {
+        if (-not $g -or (Test-IgnoredGameName $g.Name)) { continue }
+        $key = ([string]$g.Launcher + '|' + [string]$g.Name).ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $clean += $g
+    }
+    return $clean
 }
 
-Export-ModuleMember -Function Invoke-GameDetectorMenu, Get-InstalledLaunchers, Get-InstalledGames, `
+Export-ModuleMember -Function Invoke-GameDetectorMenu, Set-GameSizeMeasure, Get-InstalledLaunchers, Get-InstalledGames, `
     Get-SteamGames, Get-EpicGames, Get-RiotGames, Get-XboxGamePassGames, Get-EAGames, `
     Get-UbisoftGames, Get-GOGGames, Get-AllDrives
