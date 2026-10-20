@@ -6,6 +6,8 @@ Current version: **3.0.1** — New face
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![Release](https://img.shields.io/github/v/release/FamiliaCuba/gamefixer)](https://github.com/FamiliaCuba/gamefixer/releases)
 
+![Game Fixer 3.0.1](docs/window.png)
+
 Game Fixer is a Windows desktop tool by FamiliaCuba for checking, repairing, and measuring a gaming PC. Version 3.0.1 is a standalone window. There is nothing else to install and no loose folders to keep: you open one `GameFixer.exe`.
 
 Test mode is on by default. In that mode the app explains what it would do and does not change the PC. Live mode applies the change and asks for confirmation before it touches the system.
